@@ -324,6 +324,43 @@
           "model": "glm-4.6"
         }
       }
+    },
+    "KILO_CODE": {
+      "DEFAULT": {
+        "KILO_CODE": {
+          "yolo": true
+        }
+      },
+      "CODE": {
+        "KILO_CODE": {
+          "mode": "code",
+          "yolo": true
+        }
+      },
+      "ARCHITECT": {
+        "KILO_CODE": {
+          "mode": "architect",
+          "yolo": true
+        }
+      },
+      "DEBUG": {
+        "KILO_CODE": {
+          "mode": "debug",
+          "yolo": true
+        }
+      },
+      "ORCHESTRATOR": {
+        "KILO_CODE": {
+          "mode": "orchestrator",
+          "yolo": true
+        }
+      },
+      "APPROVALS": {
+        "KILO_CODE": {
+          "mode": "code",
+          "yolo": false
+        }
+      }
     }
   }
 }
