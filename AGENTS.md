@@ -42,5 +42,98 @@ Do not manually edit shared/types.ts, instead edit crates/server/src/bin/generat
 - Frontend: ensure `pnpm run check` and `pnpm run lint` pass. If adding runtime logic, include lightweight tests (e.g., Vitest) in the same directory.
 
 ## Security & Config Tips
-- Use `.env` for local overrides; never commit secrets. Key envs: `FRONTEND_PORT`, `BACKEND_PORT`, `HOST` 
+- Use `.env` for local overrides; never commit secrets. Key envs: `FRONTEND_PORT`, `BACKEND_PORT`, `HOST`
 - Dev ports and assets are managed by `scripts/setup-dev-environment.js`.
+
+---
+
+## Kilo Code CLI Agent
+
+### Description
+
+Kilo Code CLI (`@kilocode/cli`) is a terminal-based AI coding assistant that supports multiple operational modes and model switching. It integrates with the vibe-kanban project using the Agent Communication Protocol (ACP) via the `--experimental-acp` flag.
+
+**Key Features:**
+- Multiple LLM model support (switch between providers freely)
+- Agent Skills (extendable capabilities via `~/.kilocode/skills/`)
+- Custom Commands (`~/.kilocode/commands/`)
+- Checkpoint management for state recovery
+- Task history and search
+- Parallel mode for concurrent work
+- Auto-approval settings configuration
+
+**Available Modes:**
+- **Architect** - Planning and architecture design
+- **Code** - General coding tasks
+- **Ask** - Question-answering mode
+- **Debug** - Troubleshooting and debugging
+- **Orchestrator** - Complex multi-step tasks
+- **Custom modes** - User-defined modes
+
+### Installation Requirements
+
+```bash
+npm install -g @kilocode/cli
+```
+
+**Requirements:**
+- Node.js 18+ and npm
+- Home indicator file created at `~/.kilocode/installation_id` after first run
+
+**Availability Check:**
+The executor checks for installation by looking for `~/.kilocode/installation_id`. If found, it reports `AvailabilityInfo::LoginDetected` with the last authentication timestamp.
+
+### Configuration Options
+
+The Kilo Code executor supports the following configuration options:
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `mode` | `Option<String>` | `None` | Operating mode (e.g., "code", "architect", "debug", "orchestrator") |
+| `model` | `Option<String>` | `None` | LLM model to use |
+| `yolo` | `Option<bool>` | `false` | Enable auto-approval (no confirmation prompts) |
+| `append_prompt` | `AppendPrompt` | empty | Additional prompt to append to all requests |
+| `cmd` | `CmdOverrides` | empty | Command overrides for executable path |
+
+**Environment Variables:**
+- MCP configuration is read from `~/.kilocode/config.json`
+
+### Default Profiles
+
+The following profiles are configured in `crates/executors/default_profiles.json`:
+
+```json
+{
+  "KILO_CODE": {
+    "DEFAULT": { "yolo": true },
+    "CODE": { "mode": "code", "yolo": true },
+    "ARCHITECT": { "mode": "architect", "yolo": true },
+    "DEBUG": { "mode": "debug", "yolo": true },
+    "ORCHESTRATOR": { "mode": "orchestrator", "yolo": true },
+    "APPROVALS": { "mode": "code", "yolo": false }
+  }
+}
+```
+
+### Basic Commands
+
+| Command | Description |
+|---------|-------------|
+| `kilocode` | Start interactive chat session |
+| `kilocode --mode architect` | Start with specific mode |
+| `kilocode --workspace /path` | Start with specific workspace |
+| `kilocode --continue` | Resume last conversation |
+
+### Special Notes
+
+1. **ACP Protocol:** Kilo Code uses the experimental ACP protocol (`--experimental-acp` flag) for integration. This enables structured tool call handling, session management, and log normalization.
+
+2. **MCP Configuration:** MCP servers are configured via `~/.kilocode/config.json` under the `mcpServers` key.
+
+3. **Session Forking:** Kilo Code supports session forking, allowing parallel agent sessions for concurrent work.
+
+4. **Command Builder:** The executor uses `npx -y @kilocode/cli@latest` by default. Override using `cmd.binary_path` in configuration.
+
+5. **YOLO Mode:** When `yolo: true`, all tool calls are auto-approved without user confirmation. Set to `false` for interactive approval workflows.
+
+6. **Agent Skills:** Custom skills can be added to `~/.kilocode/skills/` directory for extended capabilities.
