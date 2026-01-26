@@ -47,6 +47,8 @@ export const useExecutionProcesses = (
       initialData
     );
 
+  console.log('[useExecutionProcesses] sessionId:', sessionId, 'isConnected:', isConnected, 'isInitialized:', isInitialized, 'executionProcess count:', Object.keys(data?.execution_processes ?? {}).length);
+
   const executionProcessesById = data?.execution_processes ?? {};
   const executionProcesses = Object.values(executionProcessesById).sort(
     (a, b) =>
