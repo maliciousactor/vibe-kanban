@@ -156,10 +156,21 @@ async fn handle_normalized_logs_ws(
     socket: WebSocket,
     stream: impl futures_util::Stream<Item = anyhow::Result<LogMsg>> + Unpin + Send + 'static,
 ) -> anyhow::Result<()> {
-    let mut stream = stream.map_ok(|msg| msg.to_ws_message_unchecked());
+    tracing::debug!("handle_normalized_logs_ws: starting");
+    let mut stream = stream.map_ok(|msg| {
+        tracing::debug!("Converting LogMsg to WebSocket message, type: {:?}", std::mem::discriminant(&msg));
+        msg.to_ws_message_unchecked()
+    });
     let (mut sender, mut receiver) = socket.split();
-    tokio::spawn(async move { while let Some(Ok(_)) = receiver.next().await {} });
+    tokio::spawn(async move { 
+        while let Some(Ok(_)) = receiver.next().await {
+            tracing::debug!("Received message from client");
+        }
+        tracing::debug!("Client receiver loop ended");
+    });
     let mut message_count = 0;
+    let mut stream_ended = false;
+    
     while let Some(item) = stream.next().await {
         match item {
             Ok(msg) => {
@@ -167,16 +178,23 @@ async fn handle_normalized_logs_ws(
                 tracing::debug!(%message_count, "Sending WebSocket message to client");
                 if sender.send(msg).await.is_err() {
                     tracing::debug!(%message_count, "Client disconnected, stopping stream");
+                    stream_ended = true;
                     break;
                 }
             }
             Err(e) => {
                 tracing::error!("stream error: {}", e);
+                stream_ended = true;
                 break;
             }
         }
     }
-    tracing::debug!(%message_count, "WebSocket stream ended");
+    
+    if stream_ended {
+        tracing::debug!(%message_count, "WebSocket stream ended due to error or disconnect");
+    } else {
+        tracing::debug!(%message_count, "WebSocket stream ended naturally");
+    }
     Ok(())
 }
 
