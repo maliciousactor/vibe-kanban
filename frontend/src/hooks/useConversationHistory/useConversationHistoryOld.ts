@@ -87,7 +87,7 @@ export const useConversationHistoryOld = ({
         controllers.delete(placeholder);
         // Return whatever entries we have so far
         resolve(controller.getEntries());
-      }, 10000); // 10 second timeout
+      }, 60000); // 60 second timeout for large message batches
       
       const controller = streamJsonPatchEntries<PatchType>(url, {
         onControllerReady: (streamController) => {
