@@ -654,8 +654,10 @@ pub trait ContainerService {
         &self,
         id: &Uuid,
     ) -> Option<futures::stream::BoxStream<'static, Result<LogMsg, std::io::Error>>> {
+        tracing::debug!("stream_normalized_logs called for id={}", id);
         // First try in-memory store (existing behavior)
         if let Some(store) = self.get_msg_store_by_id(id).await {
+            tracing::debug!("Found msg_store for id={}, returning filtered stream", id);
             Some(
                 store
                     .history_plus_stream() // BoxStream<Result<LogMsg, io::Error>>
@@ -666,7 +668,7 @@ pub trait ContainerService {
                     .boxed(),
             )
         } else {
-            // Fallback: load from DB and normalize
+            tracing::debug!("No msg_store found for id={}, falling back to DB", id);
             let log_records =
                 match ExecutionProcessLogs::find_by_execution_id(&self.db().pool, *id).await {
                     Ok(records) if !records.is_empty() => records,
@@ -1163,6 +1165,7 @@ pub trait ContainerService {
                 if let Some(executor) =
                     ExecutorConfigs::get_cached().get_coding_agent(executor_profile_id)
                 {
+                    tracing::info!("Container: Calling normalize_logs for {:?}", executor_profile_id);
                     executor.normalize_logs(msg_store, &working_dir);
                 } else {
                     tracing::error!(
