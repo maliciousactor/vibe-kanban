@@ -214,6 +214,8 @@ impl KiloCode {
 
         let new_stdout = create_stdout_pipe_writer(&mut child)?;
 
+        tracing::debug!(program = %program_path, args = ?args, "Starting Kilo Code executor");
+
         // Create interrupt channel for graceful shutdown
         let (interrupt_tx, mut interrupt_rx) = tokio::sync::oneshot::channel::<()>();
 
@@ -221,6 +223,7 @@ impl KiloCode {
         let prompt_clone = combined_prompt.clone();
         tokio::spawn(async move {
             let log_writer = LogWriter::new(new_stdout);
+            tracing::debug!("Kilo executor: LogWriter created, sending prompt");
             let mut stdin = child_stdin;
 
             // Send the prompt to stdin immediately
@@ -262,6 +265,7 @@ impl KiloCode {
                             }
                             Ok(_) => {
                                 let trimmed = line.trim();
+                                tracing::debug!(output = trimmed, "Kilo executor received stdout");
                                 if !trimmed.is_empty() {
                                     // Try to parse as JSON first
                                     match serde_json::from_str::<serde_json::Value>(trimmed) {
