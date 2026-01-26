@@ -8,6 +8,8 @@ export interface StreamOptions<E = unknown> {
   /** called after each successful patch application */
   onEntries?: (entries: E[]) => void;
   onConnect?: () => void;
+  /** Called when the controller is fully initialized and ready */
+  onControllerReady?: (controller: StreamController<E>) => void;
   onError?: (err: unknown) => void;
   /** called once when a "finished" event is received */
   onFinished?: (entries: E[]) => void;
@@ -47,6 +49,7 @@ export function streamJsonPatchEntries<E = unknown>(
 
   // Convert HTTP endpoint to WebSocket endpoint
   const wsUrl = url.replace(/^http/, 'ws');
+  console.log('[streamJsonPatchEntries] Connecting to:', wsUrl);
   const ws = new WebSocket(wsUrl);
 
   const notify = () => {
@@ -60,6 +63,7 @@ export function streamJsonPatchEntries<E = unknown>(
   };
 
   const handleMessage = (event: MessageEvent) => {
+    console.log('[streamJsonPatchEntries] Received message:', event.data.slice(0, 200));
     try {
       const msg = JSON.parse(event.data);
 
@@ -78,6 +82,7 @@ export function streamJsonPatchEntries<E = unknown>(
 
       // Handle Finished messages
       if (msg.finished !== undefined) {
+        console.log('[streamJsonPatchEntries] Finished message received');
         opts.onFinished?.(snapshot.entries);
         ws.close();
       }
@@ -88,18 +93,27 @@ export function streamJsonPatchEntries<E = unknown>(
 
   ws.addEventListener('open', () => {
     connected = true;
+    console.log('[streamJsonPatchEntries] WebSocket connected');
     opts.onConnect?.();
   });
 
   ws.addEventListener('message', handleMessage);
 
   ws.addEventListener('error', (err) => {
+    console.error('[streamJsonPatchEntries] WebSocket error:', err);
     connected = false;
     opts.onError?.(err);
   });
 
-  ws.addEventListener('close', () => {
+  ws.addEventListener('close', (event) => {
     connected = false;
+    console.log('[streamJsonPatchEntries] WebSocket closed, code:', event.code, 'reason:', event.reason || 'none');
+    // If we haven't received the "finished" message yet, resolve with current entries
+    // This handles the case where the server closes the connection without sending "finished"
+    if (opts.onFinished && snapshot.entries.length > 0) {
+      console.log('[streamJsonPatchEntries] Resolving with current entries due to close');
+      opts.onFinished(snapshot.entries);
+    }
   });
 
   return {
@@ -124,6 +138,9 @@ export function streamJsonPatchEntries<E = unknown>(
       connected = false;
     },
   };
+
+  // Notify that controller is ready (for cleanup coordination)
+  opts.onControllerReady?.(controller);
 }
 
 /**
