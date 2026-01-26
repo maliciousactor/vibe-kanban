@@ -3,7 +3,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use command_group::AsyncCommandGroup;
 use derivative::Derivative;
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::{
@@ -218,8 +218,7 @@ impl KiloCode {
         tracing::debug!(program = %program_path_display, args = ?args, "Starting Kilo Code executor");
 
         // Create interrupt channel for graceful shutdown
-        let (interrupt_tx, mut interrupt_rx) = tokio::sync::oneshot::channel::<()>();
-
+        let (interrupt_tx, interrupt_rx) = tokio::sync::oneshot::channel::<()>();
         // Spawn task to handle Kilo's JSON output and forward logs
         let prompt_clone = combined_prompt.clone();
         tokio::spawn(async move {
@@ -246,10 +245,14 @@ impl KiloCode {
                     .await;
                 return;
             }
+            drop(stdin); // Close stdin to signal EOF - required for Kilo CLI to produce output
 
             // Process Kilo's JSON output from stdout
             let mut stdout_reader = BufReader::new(child_stdout);
             let mut line = String::new();
+
+            // FUSE THE RECEIVER - Critical fix!
+            let mut interrupt_rx = interrupt_rx.fuse();
 
             loop {
                 tokio::select! {
