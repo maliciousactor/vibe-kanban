@@ -3,43 +3,57 @@ set -e
 
 echo "=== Stopping vibe-kanban stack ==="
 
-# Kill processes by port (most reliable method for this project)
-echo "Stopping processes on port 3000 (frontend)..."
-lsof -ti:3000 2>/dev/null | xargs kill -9 2>/dev/null || echo "No process found on port 3000"
+# Function to kill process on a port
+kill_port() {
+    local port=$1
+    if lsof -ti:$port &>/dev/null; then
+        echo "Stopping processes on port $port..."
+        lsof -ti:$port | xargs kill -9 2>/dev/null || true
+        sleep 0.5
+        # Force kill if still running
+        if lsof -ti:$port &>/dev/null; then
+            lsof -ti:$port | xargs kill -9 2>/dev/null || true
+            sleep 0.5
+        fi
+    fi
+}
 
-echo "Stopping processes on port 3001 (backend)..."
-lsof -ti:3001 2>/dev/null | xargs kill -9 2>/dev/null || echo "No process found on port 3001"
+# Kill processes on all known ports
+kill_port 3000  # frontend
+kill_port 3001  # backend
+kill_port 3003  # alternate backend
+kill_port 3008  # alternate backend (from pnpm run dev)
 
-# Also check for any lingering processes from previous runs
 echo "Checking for lingering vite processes in vibe-kanban..."
-lsof -ti:3003 2>/dev/null | xargs kill -9 2>/dev/null || true
-lsof -ti:3008 2>/dev/null | xargs kill -9 2>/dev/null || true
+# More aggressive vite kill
+pkill -f "vite.*vibe-kanban" 2>/dev/null || true
+pkill -f "vite --port" 2>/dev/null || true
 
-# Kill any cargo-watch processes watching this project
 echo "Stopping cargo-watch processes..."
-pkill -f "cargo-watch.*vibe-kanban" 2>/dev/null || echo "No cargo-watch found"
+pkill -f "cargo watch" 2>/dev/null || true
 
-# Kill any vite processes running from the frontend directory
-echo "Stopping vite processes..."
-pkill -f "vite.*frontend" 2>/dev/null || echo "No vite processes found"
+# Additional cleanup - kill any remaining server processes
+pkill -f "target/debug/server" 2>/dev/null || true
 
-# Give processes time to terminate
 sleep 1
 
-# Verify ports are free
-echo ""
 echo "=== Verification ==="
-if lsof -ti:3000 > /dev/null 2>&1; then
-    echo "WARNING: Port 3000 still in use"
-else
-    echo "✅ Port 3000 is free"
-fi
-
-if lsof -ti:3001 > /dev/null 2>&1; then
-    echo "WARNING: Port 3001 still in use"
-else
-    echo "✅ Port 3001 is free"
-fi
+# Verify ports are free
+for port in 3000 3001 3003 3008; do
+    if lsof -ti:$port &>/dev/null; then
+        echo "❌ Port $port is still in use"
+        lsof -ti:$port | xargs kill -9 2>/dev/null || true
+        sleep 0.5
+        if lsof -ti:$port &>/dev/null; then
+            echo "❌ Failed to free port $port"
+            exit 1
+        else
+            echo "✅ Port $port freed"
+        fi
+    else
+        echo "✅ Port $port is free"
+    fi
+done
 
 echo ""
 echo "=== Stack stopped ==="
