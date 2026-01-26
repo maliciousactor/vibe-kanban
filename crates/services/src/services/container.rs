@@ -690,12 +690,12 @@ pub trait ContainerService {
             // Create temporary store and populate
             // Include JsonPatch messages (already normalized) and Stdout/Stderr (need normalization)
             let temp_store = Arc::new(MsgStore::new());
-            for msg in raw_messages {
+            for msg in &raw_messages {
                 if matches!(
                     msg,
                     LogMsg::Stdout(_) | LogMsg::Stderr(_) | LogMsg::JsonPatch(_)
                 ) {
-                    temp_store.push(msg);
+                    temp_store.push(msg.clone());
                 }
             }
             temp_store.push_finished();
@@ -733,85 +733,17 @@ pub trait ContainerService {
                     }
                 };
 
-            if let Err(err) = self.ensure_container_exists(&workspace).await {
-                tracing::warn!(
-                    "Failed to recreate worktree before log normalization for workspace {}: {}",
-                    workspace.id,
-                    err
-                );
-            }
-
-            let current_dir = self.workspace_to_current_dir(&workspace);
-
-            let executor_action = if let Ok(executor_action) = process.executor_action() {
-                executor_action
-            } else {
-                tracing::error!(
-                    "Failed to parse executor action: {:?}",
-                    process.executor_action()
-                );
-                return None;
-            };
-
-            // Spawn normalizer on populated store
-            match executor_action.typ() {
-                ExecutorActionType::CodingAgentInitialRequest(request) => {
-                    #[cfg(feature = "qa-mode")]
-                    {
-                        let executor = QaMockExecutor;
-                        executor.normalize_logs(
-                            temp_store.clone(),
-                            &request.effective_dir(&current_dir),
-                        );
-                    }
-                    #[cfg(not(feature = "qa-mode"))]
-                    {
-                        let executor = ExecutorConfigs::get_cached()
-                            .get_coding_agent_or_default(&request.executor_profile_id);
-                        executor.normalize_logs(
-                            temp_store.clone(),
-                            &request.effective_dir(&current_dir),
-                        );
-                    }
-                }
-                ExecutorActionType::CodingAgentFollowUpRequest(request) => {
-                    #[cfg(feature = "qa-mode")]
-                    {
-                        let executor = QaMockExecutor;
-                        executor.normalize_logs(
-                            temp_store.clone(),
-                            &request.effective_dir(&current_dir),
-                        );
-                    }
-                    #[cfg(not(feature = "qa-mode"))]
-                    {
-                        let executor = ExecutorConfigs::get_cached()
-                            .get_coding_agent_or_default(&request.executor_profile_id);
-                        executor.normalize_logs(
-                            temp_store.clone(),
-                            &request.effective_dir(&current_dir),
-                        );
-                    }
-                }
-                #[cfg(feature = "qa-mode")]
-                ExecutorActionType::ReviewRequest(_request) => {
-                    let executor = QaMockExecutor;
-                    executor.normalize_logs(temp_store.clone(), &current_dir);
-                }
-                #[cfg(not(feature = "qa-mode"))]
-                ExecutorActionType::ReviewRequest(request) => {
-                    let executor = ExecutorConfigs::get_cached()
-                        .get_coding_agent_or_default(&request.executor_profile_id);
-                    executor.normalize_logs(temp_store.clone(), &current_dir);
-                }
-                _ => {
-                    tracing::debug!(
-                        "Executor action doesn't support log normalization: {:?}",
-                        process.executor_action()
-                    );
-                    return None;
-                }
-            }
+            // Note: We no longer call normalize_logs here because:
+            // 1. Normalization should happen during initial execution, not when streaming historical data
+            // 2. The KiloLogProcessor was consuming the stream, preventing the WebSocket handler from receiving messages
+            // 3. Logs are already normalized (JsonPatch) when retrieved from the store
+            
+            tracing::debug!(
+                id = %id,
+                count = raw_messages.len(),
+                "Returning stream of normalized messages"
+            );
+            
             Some(
                 temp_store
                     .history_plus_stream()
@@ -891,7 +823,77 @@ pub trait ContainerService {
                         LogMsg::Finished => {
                             break;
                         }
-                        LogMsg::JsonPatch(_) | LogMsg::Ready => continue,
+                        LogMsg::JsonPatch(_patch) => {
+                            // Debug log for JsonPatch persistence
+                            tracing::debug!(
+                                "Persisting JsonPatch message to DB for execution {}",
+                                execution_id
+                            );
+                            
+                            // Serialize this individual message as a JSONL line
+                            match serde_json::to_string(&msg) {
+                                Ok(jsonl_line) => {
+                                    let jsonl_line_with_newline = format!("{jsonl_line}\n");
+
+                                    // Append this line to the database
+                                    if let Err(e) = ExecutionProcessLogs::append_log_line(
+                                        &db.pool,
+                                        execution_id,
+                                        &jsonl_line_with_newline,
+                                    )
+                                    .await
+                                    {
+                                        tracing::error!(
+                                            "Failed to append log line for execution {}: {}",
+                                            execution_id,
+                                            e
+                                        );
+                                    } else {
+                                        tracing::debug!(
+                                            "Successfully persisted JsonPatch message to DB for execution {}",
+                                            execution_id
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Failed to serialize log message for execution {}: {}",
+                                        execution_id,
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        LogMsg::Ready => {
+                            // Serialize this individual message as a JSONL line
+                            match serde_json::to_string(&msg) {
+                                Ok(jsonl_line) => {
+                                    let jsonl_line_with_newline = format!("{jsonl_line}\n");
+
+                                    // Append this line to the database
+                                    if let Err(e) = ExecutionProcessLogs::append_log_line(
+                                        &db.pool,
+                                        execution_id,
+                                        &jsonl_line_with_newline,
+                                    )
+                                    .await
+                                    {
+                                        tracing::error!(
+                                            "Failed to append log line for execution {}: {}",
+                                            execution_id,
+                                            e
+                                        );
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::error!(
+                                        "Failed to serialize log message for execution {}: {}",
+                                        execution_id,
+                                        e
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1138,7 +1140,10 @@ pub trait ContainerService {
         // Start processing normalised logs for executor requests and follow ups
         let workspace_root = self.workspace_to_current_dir(workspace);
         #[cfg_attr(feature = "qa-mode", allow(unused_variables))]
-        if let Some(msg_store) = self.get_msg_store_by_id(&execution_process.id).await
+        let msg_store_opt = self.get_msg_store_by_id(&execution_process.id).await;
+        let has_msg_store = msg_store_opt.is_some();
+        tracing::debug!(exec_id = %execution_process.id, has_msg_store, "get_msg_store_by_id result");
+        if let Some(msg_store) = msg_store_opt
             && let Some((executor_profile_id, working_dir)) = match executor_action.typ() {
                 ExecutorActionType::CodingAgentInitialRequest(request) => Some((
                     &request.executor_profile_id,
