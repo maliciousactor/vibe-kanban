@@ -35,6 +35,10 @@ export const useConversationHistoryOld = ({
   const loadedInitialEntries = useRef(false);
   const streamingProcessIdsRef = useRef<Set<string>>(new Set());
   const onEntriesUpdatedRef = useRef<OnEntriesUpdated | null>(null);
+  // Track WebSocket controllers for cleanup (React Strict Mode race condition fix)
+  const wsControllersRef = useRef<Set<{ close: () => void }>>(new Set());
+  // Track active async operation to prevent duplicates in React Strict Mode
+  const activeAsyncOpRef = useRef<{ id: string; cancelled: boolean } | null>(null);
 
   const mergeIntoDisplayed = (
     mutator: (state: ExecutionProcessStateStore) => void
@@ -66,21 +70,52 @@ export const useConversationHistoryOld = ({
       url = `/api/execution-processes/${executionProcess.id}/normalized-logs/ws`;
     }
 
+    const controllers = wsControllersRef.current;
+    // Create a placeholder controller that will be populated after streamJsonPatchEntries returns
+    // This ensures cleanup can close it even if it hasn't been fully initialized yet
+    const placeholder: { close: () => void; onReady?: (closeFn: () => void) => void } = {
+      close: () => {}, // Will be replaced with actual close
+      onReady: undefined,
+    };
+    controllers.add(placeholder);
+
     return new Promise<PatchType[]>((resolve) => {
+      // Add timeout to prevent hanging forever
+      const timeoutId = setTimeout(() => {
+        console.warn(`[loadEntriesForHistoricExecutionProcess] Timeout for process ${executionProcess.id}, resolving with current entries`);
+        placeholder.close();
+        controllers.delete(placeholder);
+        // Return whatever entries we have so far
+        resolve(controller.getEntries());
+      }, 10000); // 10 second timeout
+      
       const controller = streamJsonPatchEntries<PatchType>(url, {
+        onControllerReady: (streamController) => {
+          // Replace placeholder's close function with the actual controller's close
+          placeholder.close = () => streamController.close();
+          if (placeholder.onReady) {
+            placeholder.onReady(() => streamController.close());
+          }
+        },
         onFinished: (allEntries) => {
+          clearTimeout(timeoutId);
           controller.close();
+          controllers.delete(placeholder);
           resolve(allEntries);
         },
         onError: (err) => {
+          clearTimeout(timeoutId);
           console.warn(
             `Error loading entries for historic execution process ${executionProcess.id}`,
             err
           );
           controller.close();
+          controllers.delete(placeholder);
           resolve([]);
         },
       });
+      // Update placeholder with actual close function immediately
+      placeholder.close = () => controller.close();
     });
   };
 
@@ -537,8 +572,20 @@ export const useConversationHistoryOld = ({
     console.log('[useConversationHistoryOld] executionProcesses count:', executionProcesses?.current.length);
     console.log('[useConversationHistoryOld] loadedInitialEntries:', loadedInitialEntries.current);
     
-    let cancelled = false;
+    // Track the active async operation to prevent duplicates
+    const asyncOpId = Date.now() + '-' + Math.random();
+    const activeAsyncOp = { id: asyncOpId, cancelled: false };
+    
+    // Store the active operation in a ref so we can cancel it
+    const prevActiveOp = activeAsyncOpRef.current;
+    activeAsyncOpRef.current = activeAsyncOp;
+    
     (async () => {
+      // Check if this operation has been superseded
+      if (prevActiveOp && prevActiveOp !== activeAsyncOp) {
+        prevActiveOp.cancelled = true;
+      }
+      
       // Wait for execution processes to load (WebSocket might not have connected yet)
       let waitCount = 0;
       const maxWait = 50; // Wait up to 5 seconds (50 * 100ms)
@@ -549,7 +596,7 @@ export const useConversationHistoryOld = ({
       
       console.log('[useConversationHistoryOld] After waiting, executionProcesses count:', executionProcesses?.current.length, 'waitCount:', waitCount);
       
-      if (cancelled) {
+      if (activeAsyncOp.cancelled) {
         console.log('[useConversationHistoryOld] Cancelled after waiting');
         return;
       }
@@ -573,7 +620,7 @@ export const useConversationHistoryOld = ({
       console.log('[useConversationHistoryOld] Calling loadInitialEntries...');
       const allInitialEntries = await loadInitialEntries();
       console.log('[useConversationHistoryOld] loadInitialEntries returned, entries count:', Object.keys(allInitialEntries).length);
-      if (cancelled) {
+      if (activeAsyncOp.cancelled) {
         console.log('[useConversationHistoryOld] Cancelled after loadInitialEntries');
         return;
       }
@@ -589,16 +636,19 @@ export const useConversationHistoryOld = ({
 
       // Then load the remaining in batches
       while (
-        !cancelled &&
+        !activeAsyncOp.cancelled &&
         (await loadRemainingEntriesInBatches(REMAINING_BATCH_SIZE))
       ) {
-        if (cancelled) return;
+        if (activeAsyncOp.cancelled) return;
       }
       await new Promise((resolve) => setTimeout(resolve, 100));
       emitEntries(displayedExecutionProcesses.current, 'historic', false);
     })();
     return () => {
-      cancelled = true;
+      // Don't close WebSockets in cleanup - let the async functions complete naturally
+      // Closing WebSockets here would prevent them from receiving messages
+      // The async functions will stop when the WebSocket receives a 'finished' message
+      // or when the component unmounts and the WebSocket is garbage collected
     };
   }, [
     attempt.id,
