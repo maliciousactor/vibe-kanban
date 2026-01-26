@@ -533,23 +533,59 @@ export const useConversationHistoryOld = ({
 
   // Initial load when attempt changes
   useEffect(() => {
+    console.log('[useConversationHistoryOld] Initial load effect running, attempt.id:', attempt?.id);
+    console.log('[useConversationHistoryOld] executionProcesses count:', executionProcesses?.current.length);
+    console.log('[useConversationHistoryOld] loadedInitialEntries:', loadedInitialEntries.current);
+    
     let cancelled = false;
     (async () => {
-      // Waiting for execution processes to load
-      if (
-        executionProcesses?.current.length === 0 ||
-        loadedInitialEntries.current
-      )
+      // Wait for execution processes to load (WebSocket might not have connected yet)
+      let waitCount = 0;
+      const maxWait = 50; // Wait up to 5 seconds (50 * 100ms)
+      while (executionProcesses?.current.length === 0 && waitCount < maxWait) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        waitCount++;
+      }
+      
+      console.log('[useConversationHistoryOld] After waiting, executionProcesses count:', executionProcesses?.current.length, 'waitCount:', waitCount);
+      
+      if (cancelled) {
+        console.log('[useConversationHistoryOld] Cancelled after waiting');
         return;
+      }
+      
+      // Already loaded or still no processes after waiting
+      if (loadedInitialEntries.current) {
+        console.log('[useConversationHistoryOld] Early return - already loaded');
+        return;
+      }
+      
+      if (executionProcesses?.current.length === 0) {
+        console.log('[useConversationHistoryOld] No execution processes after waiting - emitting empty state');
+        emitEntries(displayedExecutionProcesses.current, 'initial', false);
+        loadedInitialEntries.current = true;
+        return;
+      }
+
+      console.log('[useConversationHistoryOld] Proceeding to load initial entries');
 
       // Initial entries
+      console.log('[useConversationHistoryOld] Calling loadInitialEntries...');
       const allInitialEntries = await loadInitialEntries();
-      if (cancelled) return;
+      console.log('[useConversationHistoryOld] loadInitialEntries returned, entries count:', Object.keys(allInitialEntries).length);
+      if (cancelled) {
+        console.log('[useConversationHistoryOld] Cancelled after loadInitialEntries');
+        return;
+      }
+      
+      console.log('[useConversationHistoryOld] Merging entries into displayed...');
       mergeIntoDisplayed((state) => {
         Object.assign(state, allInitialEntries);
       });
+      console.log('[useConversationHistoryOld] Emitting entries...');
       emitEntries(displayedExecutionProcesses.current, 'initial', false);
       loadedInitialEntries.current = true;
+      console.log('[useConversationHistoryOld] Initial load complete');
 
       // Then load the remaining in batches
       while (
