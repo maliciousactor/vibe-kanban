@@ -214,7 +214,7 @@ impl KiloCode {
 
         let new_stdout = create_stdout_pipe_writer(&mut child)?;
 
-        tracing::debug!(program = %program_path, args = ?args, "Starting Kilo Code executor");
+        tracing::debug!(program = %program_path.display(), args = ?args, "Starting Kilo Code executor");
 
         // Create interrupt channel for graceful shutdown
         let (interrupt_tx, mut interrupt_rx) = tokio::sync::oneshot::channel::<()>();
