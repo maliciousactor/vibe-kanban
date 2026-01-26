@@ -561,12 +561,25 @@ export const useConversationHistory = ({
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // Waiting for execution processes to load
-      if (
-        executionProcesses?.current.length === 0 ||
-        loadedInitialEntries.current
-      )
+      console.log('[useConversationHistory] Initial load effect running, attempt.id:', attempt.id);
+      console.log('[useConversationHistory] executionProcesses count:', executionProcesses?.current.length);
+      console.log('[useConversationHistory] loadedInitialEntries:', loadedInitialEntries.current);
+
+      // Check if already loaded
+      if (loadedInitialEntries.current) {
+        console.log('[useConversationHistory] Early return - already loaded');
         return;
+      }
+
+      // No execution processes - emit empty state so loading completes
+      if (executionProcesses?.current.length === 0) {
+        console.log('[useConversationHistory] No execution processes - emitting empty state');
+        emitEntries(displayedExecutionProcesses.current, 'initial', false);
+        loadedInitialEntries.current = true;
+        return;
+      }
+
+      console.log('[useConversationHistory] Proceeding to load initial entries');
 
       // Initial entries
       const allInitialEntries = await loadInitialEntries();
