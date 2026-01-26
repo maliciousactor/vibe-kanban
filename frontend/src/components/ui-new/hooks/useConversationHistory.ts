@@ -571,13 +571,22 @@ export const useConversationHistory = ({
         return;
       }
 
-      // No execution processes - emit empty state so loading completes
+      // Wait for execution processes to load (WebSocket might not have connected yet)
+      let waitCount = 0;
+      const maxWait = 50; // Wait up to 5 seconds (50 * 100ms)
+      while (executionProcesses?.current.length === 0 && waitCount < maxWait) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        waitCount++;
+      }
+      
       if (executionProcesses?.current.length === 0) {
-        console.log('[useConversationHistory] No execution processes - emitting empty state');
+        console.log('[useConversationHistory] No execution processes after waiting - emitting empty state');
         emitEntries(displayedExecutionProcesses.current, 'initial', false);
         loadedInitialEntries.current = true;
         return;
       }
+      
+      console.log('[useConversationHistory] Execution processes loaded after waiting', waitCount, 'ticks');
 
       console.log('[useConversationHistory] Proceeding to load initial entries');
 
