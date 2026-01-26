@@ -182,9 +182,10 @@ impl KiloCode {
         env: &ExecutionEnv,
     ) -> Result<SpawnedChild, ExecutorError> {
         let (program_path, args) = command_parts.into_resolved().await?;
+        let program_path_display = program_path.display().to_string();
         let combined_prompt = self.append_prompt.combine_prompt(prompt);
 
-        let mut command = Command::new(program_path);
+        let mut command = Command::new(&program_path);
         command
             .kill_on_drop(true)
             .stdin(std::process::Stdio::piped())
@@ -214,7 +215,7 @@ impl KiloCode {
 
         let new_stdout = create_stdout_pipe_writer(&mut child)?;
 
-        tracing::debug!(program = %program_path.display(), args = ?args, "Starting Kilo Code executor");
+        tracing::debug!(program = %program_path_display, args = ?args, "Starting Kilo Code executor");
 
         // Create interrupt channel for graceful shutdown
         let (interrupt_tx, mut interrupt_rx) = tokio::sync::oneshot::channel::<()>();
