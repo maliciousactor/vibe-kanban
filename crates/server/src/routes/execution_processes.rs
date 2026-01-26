@@ -125,21 +125,30 @@ pub async fn stream_normalized_logs_ws(
     State(deployment): State<DeploymentImpl>,
     Path(exec_id): Path<Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
+    tracing::debug!(%exec_id, "stream_normalized_logs_ws: entering");
     let stream = deployment
         .container()
         .stream_normalized_logs(&exec_id)
-        .await
-        .ok_or_else(|| {
-            ApiError::ExecutionProcess(ExecutionProcessError::ExecutionProcessNotFound)
-        })?;
+        .await;
+    
+    tracing::debug!(%exec_id, "stream_normalized_logs_ws: got stream option: {:?}", stream.is_some());
+    
+    let stream = stream.ok_or_else(|| {
+        tracing::warn!(%exec_id, "stream_normalized_logs_ws: stream not found");
+        ApiError::ExecutionProcess(ExecutionProcessError::ExecutionProcessNotFound)
+    })?;
 
     // Convert the error type to anyhow::Error and turn TryStream -> Stream<Result<_, _>>
     let stream = stream.err_into::<anyhow::Error>().into_stream();
 
+    tracing::debug!(%exec_id, "stream_normalized_logs_ws: about to call on_upgrade");
+    
     Ok(ws.on_upgrade(move |socket| async move {
+        tracing::debug!(%exec_id, "stream_normalized_logs_ws: on_upgrade callback started");
         if let Err(e) = handle_normalized_logs_ws(socket, stream).await {
             tracing::warn!("normalized logs WS closed: {}", e);
         }
+        tracing::debug!(%exec_id, "stream_normalized_logs_ws: on_upgrade callback ended");
     }))
 }
 
@@ -150,10 +159,14 @@ async fn handle_normalized_logs_ws(
     let mut stream = stream.map_ok(|msg| msg.to_ws_message_unchecked());
     let (mut sender, mut receiver) = socket.split();
     tokio::spawn(async move { while let Some(Ok(_)) = receiver.next().await {} });
+    let mut message_count = 0;
     while let Some(item) = stream.next().await {
         match item {
             Ok(msg) => {
+                message_count += 1;
+                tracing::debug!(%message_count, "Sending WebSocket message to client");
                 if sender.send(msg).await.is_err() {
+                    tracing::debug!(%message_count, "Client disconnected, stopping stream");
                     break;
                 }
             }
@@ -163,6 +176,7 @@ async fn handle_normalized_logs_ws(
             }
         }
     }
+    tracing::debug!(%message_count, "WebSocket stream ended");
     Ok(())
 }
 
