@@ -16,6 +16,7 @@ use db::{
         execution_process::{
             ExecutionContext, ExecutionProcess, ExecutionProcessRunReason, ExecutionProcessStatus,
         },
+        execution_process_logs::ExecutionProcessLogs,
         execution_process_repo_state::ExecutionProcessRepoState,
         repo::Repo,
         scratch::{DraftFollowUpData, Scratch, ScratchType},
@@ -571,8 +572,33 @@ impl LocalContainerService {
             // capture the HEAD OID as the definitive "after" state (best-effort).
             container.update_after_head_commits(exec_id).await;
 
-            // Cleanup msg store
+            // Cleanup msg store - persist messages to database first
             if let Some(msg_arc) = msg_stores.write().await.remove(&exec_id) {
+                // Persist all messages from the MsgStore to the database
+                let history = msg_arc.get_history();
+                if !history.is_empty() {
+                    tracing::debug!(exec_id = %exec_id, "Persisting {} messages to database", history.len());
+                    
+                    // Serialize all messages to JSONL format
+                    let mut jsonl_lines = Vec::with_capacity(history.len());
+                    for msg in &history {
+                        if let Ok(json_line) = serde_json::to_string(msg) {
+                            jsonl_lines.push(format!("{}", json_line));
+                        }
+                    }
+                    
+                    // Append each line to the database
+                    for line in jsonl_lines {
+                        if let Err(e) = ExecutionProcessLogs::append_log_line(
+                            &db.pool,
+                            exec_id,
+                            &line,
+                        ).await {
+                            tracing::error!("Failed to persist message to database: {}", e);
+                        }
+                    }
+                }
+                
                 msg_arc.push_finished();
                 tokio::time::sleep(Duration::from_millis(50)).await; // Wait for the finish message to propagate
                 match Arc::try_unwrap(msg_arc) {
@@ -632,7 +658,7 @@ impl LocalContainerService {
         format!("{}-{}", short_uuid(workspace_id), task_title_id)
     }
 
-    async fn track_child_msgs_in_store(&self, id: Uuid, child: &mut AsyncGroupChild) {
+    async fn track_child_msgs_in_store(&self, id: Uuid, child: &mut AsyncGroupChild) -> Arc<MsgStore> {
         let store = Arc::new(MsgStore::new());
 
         let out = child.inner().stdout.take().expect("no stdout");
@@ -646,14 +672,14 @@ impl LocalContainerService {
         let err = ReaderStream::new(err)
             .map_ok(|chunk| LogMsg::Stderr(String::from_utf8_lossy(&chunk).into_owned()));
 
-        // If you have a JSON Patch source, map it to LogMsg::JsonPatch too, then select all three.
-
         // Merge and forward into the store
         let merged = select(out, err); // Stream<Item = Result<LogMsg, io::Error>>
         store.clone().spawn_forwarder(merged);
 
         let mut map = self.msg_stores().write().await;
-        map.insert(id, store);
+        map.insert(id, store.clone());
+        tracing::debug!(exec_id = %id, "track_child_msgs_in_store: registered msg_store");
+        store
     }
 
     /// Create a live diff log stream for ongoing attempts for WebSocket
@@ -1135,6 +1161,7 @@ impl ContainerService for LocalContainerService {
             ))
         })??;
 
+        // Track messages in the msg_store
         self.track_child_msgs_in_store(execution_process.id, &mut spawned.child)
             .await;
 
