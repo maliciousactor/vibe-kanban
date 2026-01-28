@@ -49,23 +49,26 @@ pnpm run prepare-db
 
 echo ""
 echo "=== Starting backend on port 3001 ==="
-# Start backend with proper env vars in background
+# Use cargo watch for development (auto-reload on code changes)
 export VK_ALLOWED_ORIGINS="http://localhost:3000"
 export BACKEND_PORT=3001
 export DISABLE_WORKTREE_ORPHAN_CLEANUP=1
 export RUST_LOG=debug
+export VK_SHARED_API_BASE="http://localhost:3001"
 
 # Kill any existing server first
+pkill -f "cargo watch" 2>/dev/null || true
 pkill -f "target/debug/server" 2>/dev/null || true
 sleep 1
 
-cargo run --bin server &
+# Start backend with cargo watch for auto-reload
+DISABLE_WORKTREE_ORPHAN_CLEANUP=1 RUST_LOG=debug BACKEND_PORT=3001 cargo watch -w crates -x 'run --bin server' &
 BACKEND_PID=$!
 echo "Backend started with PID: $BACKEND_PID"
 
 # Wait for backend to be ready
 echo "Waiting for backend to start..."
-for i in {1..30}; do
+for i in {1..60}; do
     if curl -s http://localhost:3001/health &>/dev/null; then
         echo "✅ Backend is ready on port 3001"
         break
@@ -79,10 +82,11 @@ done
 
 echo ""
 echo "=== Starting frontend on port 3000 ==="
-# Start frontend
+# Start frontend with proper API base URL
 export VITE_VK_SHARED_API_BASE="http://localhost:3001"
-pnpm run frontend:dev &
+cd frontend && pnpm run dev -- --port 3000 --host &
 FRONTEND_PID=$!
+cd ..
 echo "Frontend started with PID: $FRONTEND_PID"
 
 # Wait for frontend to be ready
