@@ -33,10 +33,9 @@ export const useLogStream = (processId: string): UseLogStreamResult => {
     const open = () => {
       // Capture processId at the time of opening the WebSocket
       const capturedProcessId = processId;
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const host = window.location.host;
+      const apiBase = import.meta.env.VITE_VK_SHARED_API_BASE || 'http://localhost:3001';
       const ws = new WebSocket(
-        `${protocol}//${host}/api/execution-processes/${processId}/raw-logs/ws`
+        `${apiBase.replace(/^http/, 'ws')}/api/execution-processes/${processId}/raw-logs/ws`
       );
       wsRef.current = ws;
       isIntentionallyClosed.current = false;
