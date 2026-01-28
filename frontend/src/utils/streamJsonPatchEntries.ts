@@ -116,7 +116,7 @@ export function streamJsonPatchEntries<E = unknown>(
     }
   });
 
-  return {
+  const controller = {
     getEntries(): E[] {
       return snapshot.entries;
     },
@@ -141,6 +141,8 @@ export function streamJsonPatchEntries<E = unknown>(
 
   // Notify that controller is ready (for cleanup coordination)
   opts.onControllerReady?.(controller);
+
+  return controller;
 }
 
 /**
