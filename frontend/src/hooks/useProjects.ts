@@ -15,7 +15,8 @@ export interface UseProjectsResult {
 }
 
 export function useProjects(): UseProjectsResult {
-  const endpoint = '/api/projects/stream/ws';
+  const apiBase = import.meta.env.VITE_VK_SHARED_API_BASE || 'http://localhost:3001';
+  const endpoint = `${apiBase}/api/projects/stream/ws`;
 
   const initialData = useCallback((): ProjectsState => ({ projects: {} }), []);
 
