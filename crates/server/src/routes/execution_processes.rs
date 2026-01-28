@@ -15,6 +15,7 @@ use db::models::{
 };
 use deployment::Deployment;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
+use libc;
 use serde::Deserialize;
 use services::services::container::ContainerService;
 use utils::{log_msg::LogMsg, response::ApiResponse};
@@ -103,12 +104,35 @@ async fn handle_raw_logs_ws(
     // Drain (and ignore) any client->server messages so pings/pongs work
     tokio::spawn(async move { while let Some(Ok(_)) = receiver.next().await {} });
 
-    // Forward server messages
+    // Forward server messages with proper disconnection handling
     while let Some(item) = stream.next().await {
         match item {
             Ok(msg) => {
-                if sender.send(msg).await.is_err() {
-                    break; // client disconnected
+                match sender.send(msg).await {
+                    Ok(_) => {
+                        // Message sent successfully
+                    }
+                    Err(e) => {
+                        // Check if this is an expected disconnection error
+                        let is_expected_disconnection = match e {
+                            axum::Error::Io(io_error) => {
+                                io_error.kind() == std::io::ErrorKind::BrokenPipe
+                                    || io_error.kind() == std::io::ErrorKind::ConnectionReset
+                                    || io_error.raw_os_error() == Some(libc::EPIPE)
+                                    || io_error.raw_os_error() == Some(libc::ECONNRESET)
+                            }
+                            _ => false,
+                        };
+                        
+                        if is_expected_disconnection {
+                            tracing::debug!("Client disconnected (expected disconnection)");
+                        } else {
+                            tracing::error!("WebSocket send error: {}", e);
+                        }
+                        
+                        // Stop sending messages regardless of error type
+                        break;
+                    }
                 }
             }
             Err(e) => {
@@ -176,10 +200,32 @@ async fn handle_normalized_logs_ws(
             Ok(msg) => {
                 message_count += 1;
                 tracing::debug!(%message_count, "Sending WebSocket message to client");
-                if sender.send(msg).await.is_err() {
-                    tracing::debug!(%message_count, "Client disconnected, stopping stream");
-                    stream_ended = true;
-                    break;
+                match sender.send(msg).await {
+                    Ok(_) => {
+                        // Message sent successfully
+                    }
+                    Err(e) => {
+                        // Check if this is an expected disconnection error
+                        let is_expected_disconnection = match e {
+                            axum::Error::Io(io_error) => {
+                                io_error.kind() == std::io::ErrorKind::BrokenPipe
+                                    || io_error.kind() == std::io::ErrorKind::ConnectionReset
+                                    || io_error.raw_os_error() == Some(libc::EPIPE)
+                                    || io_error.raw_os_error() == Some(libc::ECONNRESET)
+                            }
+                            _ => false,
+                        };
+                        
+                        if is_expected_disconnection {
+                            tracing::debug!(%message_count, "Client disconnected (expected disconnection)");
+                        } else {
+                            tracing::error!(%message_count, "WebSocket send error: {}", e);
+                        }
+                        
+                        // Stop sending messages regardless of error type
+                        stream_ended = true;
+                        break;
+                    }
                 }
             }
             Err(e) => {
@@ -248,12 +294,35 @@ async fn handle_execution_processes_by_session_ws(
     // Drain (and ignore) any client->server messages so pings/pongs work
     tokio::spawn(async move { while let Some(Ok(_)) = receiver.next().await {} });
 
-    // Forward server messages
+    // Forward server messages with proper disconnection handling
     while let Some(item) = stream.next().await {
         match item {
             Ok(msg) => {
-                if sender.send(msg).await.is_err() {
-                    break; // client disconnected
+                match sender.send(msg).await {
+                    Ok(_) => {
+                        // Message sent successfully
+                    }
+                    Err(e) => {
+                        // Check if this is an expected disconnection error
+                        let is_expected_disconnection = match e {
+                            axum::Error::Io(io_error) => {
+                                io_error.kind() == std::io::ErrorKind::BrokenPipe
+                                    || io_error.kind() == std::io::ErrorKind::ConnectionReset
+                                    || io_error.raw_os_error() == Some(libc::EPIPE)
+                                    || io_error.raw_os_error() == Some(libc::ECONNRESET)
+                            }
+                            _ => false,
+                        };
+                        
+                        if is_expected_disconnection {
+                            tracing::debug!("Client disconnected (expected disconnection)");
+                        } else {
+                            tracing::error!("WebSocket send error: {}", e);
+                        }
+                        
+                        // Stop sending messages regardless of error type
+                        break;
+                    }
                 }
             }
             Err(e) => {
