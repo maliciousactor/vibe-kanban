@@ -21,7 +21,8 @@ export interface UseProjectTasksResult {
  * Live updates arrive at /tasks/<id> via add/replace/remove operations.
  */
 export const useProjectTasks = (projectId: string): UseProjectTasksResult => {
-  const endpoint = `/api/tasks/stream/ws?project_id=${encodeURIComponent(projectId)}`;
+  const apiBase = import.meta.env.VITE_VK_SHARED_API_BASE || 'http://localhost:3001';
+  const endpoint = `${apiBase}/api/tasks/stream/ws?project_id=${encodeURIComponent(projectId)}`;
 
   const initialData = useCallback((): TasksState => ({ tasks: {} }), []);
 
