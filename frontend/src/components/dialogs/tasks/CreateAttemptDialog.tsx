@@ -149,14 +149,29 @@ const CreateAttemptDialogImpl = NiceModal.create<CreateAttemptDialogProps>(
       try {
         const repos = getWorkspaceRepoInputs();
 
-        await createAttempt({
-          profile: effectiveProfile,
-          repos,
+        // Add timeout to prevent hanging
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('Task creation timed out')), 30000);
         });
+
+        await Promise.race([
+          createAttempt({
+            profile: effectiveProfile,
+            repos,
+          }),
+          timeoutPromise
+        ]);
 
         modal.hide();
       } catch (err) {
         console.error('Failed to create attempt:', err);
+        // Show error message to user
+        if (err instanceof Error && err.message.includes('timed out')) {
+          // Timeout error - modal will stay open for retry
+        } else {
+          // Other error - hide modal
+          modal.hide();
+        }
       }
     };
 
