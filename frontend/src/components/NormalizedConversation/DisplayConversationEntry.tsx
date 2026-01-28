@@ -899,6 +899,23 @@ function DisplayConversationEntry({
     );
   }
 
+  if (entryType.type === 'assistant_message') {
+    return (
+      <div
+        className={`px-4 py-2 text-sm ${greyed ? 'opacity-50 pointer-events-none' : ''}`}
+      >
+        <CollapsibleEntry
+          content={isNormalizedEntry(entry) ? entry.content : ''}
+          markdown={shouldRenderMarkdown(entryType)}
+          expansionKey={expansionKey}
+          variant="system"
+          contentClassName={getContentClassName(entryType)}
+          taskAttemptId={taskAttempt?.id}
+        />
+      </div>
+    );
+  }
+
   if (isLoading) {
     return (
       <div className="px-4 py-2 text-sm">
