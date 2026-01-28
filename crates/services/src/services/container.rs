@@ -747,7 +747,7 @@ pub trait ContainerService {
             Some(
                 temp_store
                     .history_plus_stream()
-                    .filter(|msg| future::ready(matches!(msg, Ok(LogMsg::JsonPatch(..)))))
+                    .filter(|msg| future::ready(matches!(msg, Ok(LogMsg::JsonPatch(..)) | Ok(LogMsg::Stdout(..)) | Ok(LogMsg::Stderr(..)))))
                     .chain(futures::stream::once(async {
                         Ok::<_, std::io::Error>(LogMsg::Finished)
                     }))
@@ -1163,7 +1163,7 @@ pub trait ContainerService {
             #[cfg(feature = "qa-mode")]
             {
                 let executor = QaMockExecutor;
-                executor.normalize_logs(msg_store, &working_dir);
+                executor.normalize_logs(msg_store, &working_dir).await;
             }
             #[cfg(not(feature = "qa-mode"))]
             {
@@ -1171,7 +1171,7 @@ pub trait ContainerService {
                     ExecutorConfigs::get_cached().get_coding_agent(executor_profile_id)
                 {
                     tracing::info!("Container: Calling normalize_logs for {:?}", executor_profile_id);
-                    executor.normalize_logs(msg_store, &working_dir);
+                    executor.normalize_logs(msg_store, &working_dir).await;
                 } else {
                     tracing::error!(
                         "Failed to resolve profile '{:?}' for normalization",

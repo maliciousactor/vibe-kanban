@@ -149,7 +149,7 @@ impl StandardCodingAgentExecutor for CursorAgent {
         Ok(child.into())
     }
 
-    fn normalize_logs(&self, msg_store: Arc<MsgStore>, worktree_path: &Path) {
+    async fn normalize_logs(&self, msg_store: Arc<MsgStore>, worktree_path: &Path) {
         let entry_index_provider = EntryIndexProvider::start_from(&msg_store);
 
         // Custom stderr processor for Cursor that detects login errors

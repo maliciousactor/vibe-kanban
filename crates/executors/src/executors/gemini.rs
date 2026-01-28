@@ -113,7 +113,7 @@ impl StandardCodingAgentExecutor for Gemini {
             .await
     }
 
-    fn normalize_logs(&self, msg_store: Arc<MsgStore>, worktree_path: &Path) {
+    async fn normalize_logs(&self, msg_store: Arc<MsgStore>, worktree_path: &Path) {
         super::acp::normalize_logs(msg_store, worktree_path);
     }
 

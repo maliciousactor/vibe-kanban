@@ -189,7 +189,7 @@ impl StandardCodingAgentExecutor for Copilot {
     /// Parses both stderr and stdout logs for Copilot executor using PlainTextLogProcessor.
     ///
     /// Each entry is converted into an `AssistantMessage` or `ErrorMessage` and emitted as patches.
-    fn normalize_logs(&self, msg_store: Arc<MsgStore>, _worktree_path: &Path) {
+    async fn normalize_logs(&self, msg_store: Arc<MsgStore>, _worktree_path: &Path) {
         let entry_index_counter = EntryIndexProvider::start_from(&msg_store);
         normalize_stderr_logs(msg_store.clone(), entry_index_counter.clone());
 

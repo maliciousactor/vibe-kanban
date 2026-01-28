@@ -103,12 +103,12 @@ impl StandardCodingAgentExecutor for KiloCode {
             .await
     }
 
-    fn normalize_logs(&self, msg_store: Arc<MsgStore>, worktree_path: &std::path::Path) {
+    async fn normalize_logs(&self, msg_store: Arc<MsgStore>, worktree_path: &std::path::Path) {
         tracing::debug!("KiloCode::normalize_logs called");
         let entry_index_provider = EntryIndexProvider::start_from(&msg_store);
 
-        // Process Kilo Code's JSON output from stdout
-        KiloLogProcessor::process_logs(msg_store.clone(), worktree_path, entry_index_provider.clone());
+        // Process Kilo Code's JSON output from stdout - await completion
+        KiloLogProcessor::process_logs(msg_store.clone(), worktree_path, entry_index_provider.clone()).await;
 
         // Process stderr logs using standard stderr processor
         tracing::debug!("KiloCode::normalize_logs: calling normalize_stderr_logs");
@@ -345,64 +345,62 @@ struct KiloLogProcessor;
 
 impl KiloLogProcessor {
     /// Process raw logs and convert them to normalized entries with patches
-    pub fn process_logs(
+    pub async fn process_logs(
         msg_store: Arc<MsgStore>,
         _worktree_path: &std::path::Path,
         entry_index_provider: EntryIndexProvider,
     ) {
         tracing::debug!("KiloLogProcessor: Starting log normalization");
-        tokio::spawn(async move {
-            let mut stream = msg_store.history_plus_stream();
-            let mut buffer = String::new();
-            let mut msg_count = 0usize;
+        let mut stream = msg_store.history_plus_stream();
+        let mut buffer = String::new();
+        let mut msg_count = 0usize;
 
-            while let Some(Ok(msg)) = stream.next().await {
-                let chunk = match msg {
-                    LogMsg::Stdout(x) => x,
-                    LogMsg::JsonPatch(_)
-                    | LogMsg::SessionId(_)
-                    | LogMsg::Stderr(_)
-                    | LogMsg::Ready
-                    | LogMsg::Finished => continue,
-                };
+        while let Some(Ok(msg)) = stream.next().await {
+            let chunk = match msg {
+                LogMsg::Stdout(x) => x,
+                LogMsg::JsonPatch(_)
+                | LogMsg::SessionId(_)
+                | LogMsg::Stderr(_)
+                | LogMsg::Ready
+                | LogMsg::Finished => continue,
+            };
 
-                buffer.push_str(&chunk);
-                msg_count += 1;
-                tracing::debug!(count = msg_count, "KiloLogProcessor: Received message");
+            buffer.push_str(&chunk);
+            msg_count += 1;
+            tracing::debug!(count = msg_count, "KiloLogProcessor: Received message");
 
-                // Process complete JSON lines
-                for line in buffer
-                    .split_inclusive('\n')
-                    .filter(|l| l.ends_with('\n'))
-                    .map(str::to_owned)
-                    .collect::<Vec<_>>()
-                {
-                    let trimmed = line.trim();
-                    if trimmed.is_empty() {
-                        continue;
+            // Process complete JSON lines
+            for line in buffer
+                .split_inclusive('\n')
+                .filter(|l| l.ends_with('\n'))
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+            {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+
+                // Try to parse as JSON first
+                match serde_json::from_str::<serde_json::Value>(trimmed) {
+                    Ok(json_value) => {
+                        // Parse Kilo Code's JSON protocol
+                        tracing::debug!(json_type = ?json_value.get("type"), "KiloLogProcessor: Processing JSON message");
+                        let patches =
+                            Self::normalize_entries(&json_value, &entry_index_provider);
+                        tracing::debug!(patch_count = patches.len(), "KiloLogProcessor: Created patches");
+                        for patch in patches {
+                            msg_store.push_patch(patch);
+                        }
                     }
-
-                    // Try to parse as JSON first
-                    match serde_json::from_str::<serde_json::Value>(trimmed) {
-                        Ok(json_value) => {
-                            // Parse Kilo Code's JSON protocol
-                            tracing::debug!(json_type = ?json_value.get("type"), "KiloLogProcessor: Processing JSON message");
-                            let patches =
-                                Self::normalize_entries(&json_value, &entry_index_provider);
-                            tracing::debug!(patch_count = patches.len(), "KiloLogProcessor: Created patches");
-                            for patch in patches {
-                                msg_store.push_patch(patch);
-                            }
-                        }
-                        Err(_) => {
-                            // Handle non-JSON output as raw system message
-                            // (this shouldn't normally happen with --json flag)
-                        }
+                    Err(_) => {
+                        // Handle non-JSON output as raw system message
+                        // (this shouldn't normally happen with --json flag)
                     }
                 }
             }
-            tracing::debug!(count = msg_count, "KiloLogProcessor: Finished processing");
-        });
+        }
+        tracing::debug!(count = msg_count, "KiloLogProcessor: Finished processing");
     }
 
     /// Normalize JSON entries from Kilo Code
