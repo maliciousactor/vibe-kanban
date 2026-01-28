@@ -120,8 +120,9 @@ async function fetchWorkspaceSummariesByArchived(
 export function useWorkspaces(): UseWorkspacesResult {
   // Two separate WebSocket connections: one for active, one for archived
   // No limit param - we fetch all and slice on frontend so backfill works when archiving
-  const activeEndpoint = '/api/task-attempts/stream/ws?archived=false';
-  const archivedEndpoint = '/api/task-attempts/stream/ws?archived=true';
+  const apiBase = import.meta.env.VITE_VK_SHARED_API_BASE || 'http://localhost:3001';
+  const activeEndpoint = `${apiBase}/api/task-attempts/stream/ws?archived=false`;
+  const archivedEndpoint = `${apiBase}/api/task-attempts/stream/ws?archived=true`;
 
   const initialData = useCallback(
     (): WorkspacesState => ({ workspaces: {} }),
