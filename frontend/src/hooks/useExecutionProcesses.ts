@@ -28,11 +28,12 @@ export const useExecutionProcesses = (
   let endpoint: string | undefined;
 
   if (sessionId) {
+    const apiBase = import.meta.env.VITE_VK_SHARED_API_BASE || 'http://localhost:3001';
     const params = new URLSearchParams({ session_id: sessionId });
     if (typeof showSoftDeleted === 'boolean') {
       params.set('show_soft_deleted', String(showSoftDeleted));
     }
-    endpoint = `/api/execution-processes/stream/session/ws?${params.toString()}`;
+    endpoint = `${apiBase}/api/execution-processes/stream/session/ws?${params.toString()}`;
   }
 
   const initialData = useCallback(
