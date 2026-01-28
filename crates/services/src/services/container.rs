@@ -713,7 +713,7 @@ pub trait ContainerService {
             };
 
             // Get the workspace to determine correct directory
-            let (workspace, _session) =
+            let (_workspace, _session) =
                 match process.parent_workspace_and_session(&self.db().pool).await {
                     Ok(Some((workspace, session))) => (workspace, session),
                     Ok(None) => {
