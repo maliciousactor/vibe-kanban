@@ -145,31 +145,70 @@ impl StandardCodingAgentExecutor for KiloCode {
 impl KiloCode {
     /// Format Kilo Code JSON message for display
     fn format_kilo_message(json_value: &serde_json::Value) -> String {
-        // Extract message type and content from Kilo's JSON protocol
-        // The exact format depends on Kilo's output structure
-        if let Some(msg_type) = json_value.get("type").and_then(|v| v.as_str()) {
-            match msg_type {
-                "assistant_message" | "message" => {
+        // Kilo Code's JSON protocol format:
+        // {"timestamp":...,"source":"extension","type":"say","say":"text"|"reasoning"|"completion_result"|...,"content":"...","partial":true|false}
+        
+        // First check if this is a Kilo extension message
+        if json_value.get("source").and_then(|v| v.as_str()) != Some("extension") {
+            // Fallback to generic JSON serialization for non-extension messages
+            return serde_json::to_string_pretty(json_value)
+                .unwrap_or_else(|_| "[Unknown Kilo message]".to_string());
+        }
+        
+        // Get the "say" field which contains the actual message type
+        if let Some(say_type) = json_value.get("say").and_then(|v| v.as_str()) {
+            match say_type {
+                "text" => {
+                    // Main assistant message - display the content
+                    if let Some(content) = json_value.get("content").and_then(|v| v.as_str()) {
+                        // Check if this is a partial message
+                        let is_partial = json_value.get("partial").and_then(|v| v.as_bool()).unwrap_or(false);
+                        if is_partial {
+                            return content.to_string();
+                        }
+                        return content.to_string();
+                    }
+                }
+                "reasoning" => {
+                    // Thinking/reasoning content
+                    if let Some(content) = json_value.get("content").and_then(|v| v.as_str()) {
+                        let is_partial = json_value.get("partial").and_then(|v| v.as_bool()).unwrap_or(false);
+                        if is_partial {
+                            return format!("[Thinking] {}", content);
+                        }
+                        return format!("[Reasoning]\n{}", content);
+                    }
+                }
+                "completion_result" => {
+                    // Task completion result
+                    if let Some(content) = json_value.get("content").and_then(|v| v.as_str()) {
+                        return format!("[Completed] {}", content);
+                    }
+                }
+                "subtask_result" => {
+                    // Subtask result (from Orchestrator delegating to other modes)
+                    if let Some(content) = json_value.get("content").and_then(|v| v.as_str()) {
+                        return format!("[Subtask Result] {}", content);
+                    }
+                }
+                "api_req_started" | "api_req_ended" => {
+                    // API request metadata - skip these as they're not user-facing
+                    return String::new();
+                }
+                "checkpoint_saved" => {
+                    // Checkpoint saved - skip as it's not user-facing
+                    return String::new();
+                }
+                "welcome" => {
+                    // Welcome message - can be empty
+                    return String::new();
+                }
+                _ => {
+                    // Unknown say type - try to get content anyway
                     if let Some(content) = json_value.get("content").and_then(|v| v.as_str()) {
                         return content.to_string();
                     }
                 }
-                "tool_call" => {
-                    if let Some(tool_name) = json_value.get("name").and_then(|v| v.as_str()) {
-                        return format!("[Tool: {tool_name}]");
-                    }
-                }
-                "tool_result" => {
-                    if let Some(tool_name) = json_value.get("name").and_then(|v| v.as_str()) {
-                        return format!("[Tool Result: {tool_name}]");
-                    }
-                }
-                "error" => {
-                    if let Some(error_msg) = json_value.get("message").and_then(|v| v.as_str()) {
-                        return format!("[Error] {error_msg}");
-                    }
-                }
-                _ => {}
             }
         }
 
@@ -410,10 +449,98 @@ impl KiloLogProcessor {
     ) -> Vec<json_patch::Patch> {
         let mut patches = Vec::new();
 
-        // Kilo Code's JSON protocol format is not yet fully documented
-        // For now, we'll pass through raw JSON messages as system messages
-        // This can be enhanced once protocol is better understood
+        // Kilo Code's JSON protocol format:
+        // {"timestamp":...,"source":"extension","type":"say","say":"text"|"reasoning"|...,"content":"...","partial":true|false}
+        
+        // First check if this is a Kilo extension message
+        let source = json_value.get("source").and_then(|v| v.as_str());
+        
+        if source == Some("extension") {
+            // This is a Kilo extension message
+            if let Some(say_type) = json_value.get("say").and_then(|v| v.as_str()) {
+                let content = json_value.get("content").and_then(|v| v.as_str()).unwrap_or("");
+                
+                match say_type {
+                    "text" => {
+                        // Main assistant message
+                        let entry = crate::logs::NormalizedEntry {
+                            timestamp: json_value.get("timestamp").and_then(|v| v.as_u64()).map(|ts| {
+                                chrono::DateTime::from_timestamp_millis(ts as i64)
+                                    .map(|dt| dt.to_rfc3339())
+                                    .unwrap_or_default()
+                            }),
+                            entry_type: crate::logs::NormalizedEntryType::AssistantMessage,
+                            content: content.to_string(),
+                            metadata: None,
+                        };
+                        let patch_id = entry_index_provider.next();
+                        let patch = crate::logs::utils::patch::ConversationPatch::add_normalized_entry(
+                            patch_id, entry,
+                        );
+                        patches.push(patch);
+                    }
+                    "reasoning" => {
+                        // Thinking/reasoning content
+                        let entry = crate::logs::NormalizedEntry {
+                            timestamp: json_value.get("timestamp").and_then(|v| v.as_u64()).map(|ts| {
+                                chrono::DateTime::from_timestamp_millis(ts as i64)
+                                    .map(|dt| dt.to_rfc3339())
+                                    .unwrap_or_default()
+                            }),
+                            entry_type: crate::logs::NormalizedEntryType::Thinking,
+                            content: content.to_string(),
+                            metadata: None,
+                        };
+                        let patch_id = entry_index_provider.next();
+                        let patch = crate::logs::utils::patch::ConversationPatch::add_normalized_entry(
+                            patch_id, entry,
+                        );
+                        patches.push(patch);
+                    }
+                    "completion_result" | "subtask_result" => {
+                        // Task completion or subtask result - treat as assistant message
+                        let entry = crate::logs::NormalizedEntry {
+                            timestamp: json_value.get("timestamp").and_then(|v| v.as_u64()).map(|ts| {
+                                chrono::DateTime::from_timestamp_millis(ts as i64)
+                                    .map(|dt| dt.to_rfc3339())
+                                    .unwrap_or_default()
+                            }),
+                            entry_type: crate::logs::NormalizedEntryType::AssistantMessage,
+                            content: content.to_string(),
+                            metadata: None,
+                        };
+                        let patch_id = entry_index_provider.next();
+                        let patch = crate::logs::utils::patch::ConversationPatch::add_normalized_entry(
+                            patch_id, entry,
+                        );
+                        patches.push(patch);
+                    }
+                    // Skip metadata-only messages
+                    "api_req_started" | "api_req_ended" | "checkpoint_saved" | "welcome" => {
+                        // These are not user-facing messages, skip them
+                    }
+                    _ => {
+                        // Unknown say type - log as system message
+                        let entry = crate::logs::NormalizedEntry {
+                            timestamp: None,
+                            entry_type: crate::logs::NormalizedEntryType::SystemMessage,
+                            content: serde_json::to_string(json_value).unwrap_or_else(|_| "Unknown".to_string()),
+                            metadata: None,
+                        };
+                        let patch_id = entry_index_provider.next();
+                        let patch = crate::logs::utils::patch::ConversationPatch::add_normalized_entry(
+                            patch_id, entry,
+                        );
+                        patches.push(patch);
+                    }
+                }
+                
+                tracing::debug!(say_type = say_type, patch_count = patches.len(), "KiloLogProcessor: Created normalized entry patches");
+                return patches;
+            }
+        }
 
+        // For non-extension messages or parsing failures, create a system message
         let entry = crate::logs::NormalizedEntry {
             timestamp: None,
             entry_type: crate::logs::NormalizedEntryType::SystemMessage,
