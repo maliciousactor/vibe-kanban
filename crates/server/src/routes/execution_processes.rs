@@ -15,13 +15,36 @@ use db::models::{
 };
 use deployment::Deployment;
 use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use libc;
+use nix::errno::Errno;
 use serde::Deserialize;
 use services::services::container::ContainerService;
+use std::{io, error::Error};
 use utils::{log_msg::LogMsg, response::ApiResponse};
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError, middleware::load_execution_process_middleware};
+
+/// Check if a WebSocket error is an expected client disconnection
+fn is_expected_disconnection(error: &axum::Error) -> bool {
+    // Check if it's an I/O error with broken pipe or connection reset
+    if let Some(io_error) = error.source().and_then(|s| s.downcast_ref::<io::Error>()) {
+        matches!(
+            io_error.kind(),
+            io::ErrorKind::BrokenPipe | io::ErrorKind::ConnectionReset
+        )
+    } else {
+        // Walk the error chain to find Errno::EPIPE or Errno::ECONNRESET
+        let mut current = error.source();
+        while let Some(err) = current {
+            // Check for nix::errno::Errno
+            if let Some(nix_err) = err.downcast_ref::<Errno>() {
+                return *nix_err == Errno::EPIPE || *nix_err == Errno::ECONNRESET;
+            }
+            current = err.source();
+        }
+        false
+    }
+}
 
 #[derive(Debug, Deserialize)]
 pub struct SessionExecutionProcessQuery {
@@ -114,15 +137,7 @@ async fn handle_raw_logs_ws(
                     }
                     Err(e) => {
                         // Check if this is an expected disconnection error
-                        let is_expected_disconnection = match e {
-                            axum::Error::Io(io_error) => {
-                                io_error.kind() == std::io::ErrorKind::BrokenPipe
-                                    || io_error.kind() == std::io::ErrorKind::ConnectionReset
-                                    || io_error.raw_os_error() == Some(libc::EPIPE)
-                                    || io_error.raw_os_error() == Some(libc::ECONNRESET)
-                            }
-                            _ => false,
-                        };
+                        let is_expected_disconnection = is_expected_disconnection(&e);
                         
                         if is_expected_disconnection {
                             tracing::debug!("Client disconnected (expected disconnection)");
@@ -206,15 +221,7 @@ async fn handle_normalized_logs_ws(
                     }
                     Err(e) => {
                         // Check if this is an expected disconnection error
-                        let is_expected_disconnection = match e {
-                            axum::Error::Io(io_error) => {
-                                io_error.kind() == std::io::ErrorKind::BrokenPipe
-                                    || io_error.kind() == std::io::ErrorKind::ConnectionReset
-                                    || io_error.raw_os_error() == Some(libc::EPIPE)
-                                    || io_error.raw_os_error() == Some(libc::ECONNRESET)
-                            }
-                            _ => false,
-                        };
+                        let is_expected_disconnection = is_expected_disconnection(&e);
                         
                         if is_expected_disconnection {
                             tracing::debug!(%message_count, "Client disconnected (expected disconnection)");
@@ -304,15 +311,7 @@ async fn handle_execution_processes_by_session_ws(
                     }
                     Err(e) => {
                         // Check if this is an expected disconnection error
-                        let is_expected_disconnection = match e {
-                            axum::Error::Io(io_error) => {
-                                io_error.kind() == std::io::ErrorKind::BrokenPipe
-                                    || io_error.kind() == std::io::ErrorKind::ConnectionReset
-                                    || io_error.raw_os_error() == Some(libc::EPIPE)
-                                    || io_error.raw_os_error() == Some(libc::ECONNRESET)
-                            }
-                            _ => false,
-                        };
+                        let is_expected_disconnection = is_expected_disconnection(&e);
                         
                         if is_expected_disconnection {
                             tracing::debug!("Client disconnected (expected disconnection)");
